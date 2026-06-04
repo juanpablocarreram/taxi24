@@ -1,0 +1,15 @@
+POST http://localhost:4000/api/bookings
+Content-Type: application/json
+
+{
+    "pickup-address": "Mi casa",
+    "dropoff-address": "Mi trabajo",
+    "username": "mil mascaras"
+}
+
+POST http://localhost:4000/api/bookings/39168a4e-52c9-11f1-a3fa-b025aa86fbd4
+Content-Type: application/json
+{
+    "action": "accept",
+    "username": "frodo",
+}

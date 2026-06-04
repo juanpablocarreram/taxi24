@@ -1,0 +1,106 @@
+import React, {useEffect, useState} from 'react';
+import Button from '@mui/material/Button'
+
+import socket from '../services/taxi_socket';
+import { TextField, Box, Typography, Alert, CircularProgress } from '@mui/material';
+
+function Customer(props) {
+  let [pickupAddress, setPickupAddress] = useState("Tecnologico de Monterrey, campus Puebla, Mexico");
+  let [dropOffAddress, setDropOffAddress] = useState("Triangulo Las Animas, Puebla, Mexico");
+  let [msg, setMsg] = useState("");
+  let [msg1, setMsg1] = useState("");
+  let [loading, setLoading] = useState(false);
+  let [bookingStatus, setBookingStatus] = useState("idle"); // idle, sending, success, error
+  let [assignedDriver, setAssignedDriver] = useState(null);
+
+  useEffect(() => {
+    let channel = socket.channel("customer:" + props.username, {token: "123"});
+    channel.on("greetings", data => console.log(data));
+    channel.on("booking_request", dataFromPush => {
+      console.log("Customer received update:", dataFromPush);
+      setMsg1(dataFromPush.msg);
+    });
+    channel.join();
+    console.log(`Customer ${props.username} connected to channel`);
+  },[props]);
+
+  let submit = () => {
+    setLoading(true);
+    setBookingStatus("sending");
+    setMsg("");
+    setMsg1("");
+    
+    console.log("Customer submitting booking:", {pickup_address: pickupAddress, dropoff_address: dropOffAddress, username: props.username});
+    
+    fetch(`http://localhost:4000/api/bookings`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pickup_address: pickupAddress, dropoff_address: dropOffAddress, username: props.username})
+    })
+      .then(resp => {
+        if (!resp.ok) throw new Error(`HTTP error! status: ${resp.status}`);
+        return resp.json();
+      })
+      .then(dataFromPOST => {
+        console.log("Booking submitted successfully:", dataFromPOST);
+        setMsg(dataFromPOST.msg);
+        setBookingStatus("success");
+        setLoading(false);
+      })
+      .catch(error => {
+        console.error("Error submitting booking:", error);
+        setMsg(`Error: ${error.message}`);
+        setBookingStatus("error");
+        setLoading(false);
+      });
+  };
+
+  return (
+    <div style={{textAlign: "center", borderStyle: "solid", padding: "20px", margin: "10px"}}>
+      <Typography variant="h6">Customer: {props.username}</Typography>
+      <div style={{marginTop: "20px"}}>
+        <TextField 
+          id="pickup-address" 
+          label="Pickup address"
+          fullWidth
+          onChange={ev => setPickupAddress(ev.target.value)}
+          value={pickupAddress}
+          disabled={loading}
+          style={{marginBottom: "10px"}}
+        />
+        <TextField 
+          id="dropoff-address" 
+          label="Drop off address"
+          fullWidth
+          onChange={ev => setDropOffAddress(ev.target.value)}
+          value={dropOffAddress}
+          disabled={loading}
+          style={{marginBottom: "10px"}}
+        />
+        <Button 
+          onClick={submit} 
+          variant="contained" 
+          color="primary"
+          disabled={loading}
+          style={{marginTop: "10px"}}
+        >
+          {loading ? <CircularProgress size={24} /> : "Submit Booking"}
+        </Button>
+      </div>
+
+      {msg && (
+        <Alert severity={bookingStatus === "success" ? "success" : "error"} style={{marginTop: "15px"}}>
+          {msg}
+        </Alert>
+      )}
+
+      {msg1 && (
+        <Alert severity="info" style={{marginTop: "10px"}}>
+          <strong>Driver Update:</strong> {msg1}
+        </Alert>
+      )}
+    </div>
+  );
+}
+
+export default Customer;

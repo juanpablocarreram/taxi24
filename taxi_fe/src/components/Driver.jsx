@@ -31,21 +31,8 @@ function Driver(props) {
     });
     channel.on("booking_timeout", data => {
       console.log(`[Driver ${props.username}] Request ${data.bookingId} timed out on server.`);
-      
-      setRequests(prev => {
-        // Filtrar y eliminar el viaje que caducó
-        const updated = prev.filter(req => req.bookingId !== data.bookingId);
-        
-        // Ajustar el índice visual para evitar quedar apuntando a un elemento inexistente
-        setCurrentIndex(prevIndex => {
-          if (prevIndex >= updated.length && updated.length > 0) {
-            return updated.length - 1;
-          }
-          return prevIndex > 0 ? prevIndex : 0;
-        });
-
-        return updated;
-      });
+      setRequests(prev => prev.filter(req => req.bookingId !== data.bookingId));
+      setCurrentIndex(prev => (prev > 0 ? prev - 1 : 0));
     });
     channel.on("phx_reply", (status, response) => {
       console.log(`[Driver ${props.username}] Channel reply:`, status, response);

@@ -5,7 +5,7 @@ defmodule TaxiBeWeb.BookingController do
   def create(conn, req) do
     IO.inspect(req)
     booking_id = UUID.uuid1()
-    TaxiAllocationJobV2.start_link(
+    TaxiAllocationJobV2.start(
       req |> Map.put("booking_id", booking_id),
       String.to_atom(booking_id)
     )

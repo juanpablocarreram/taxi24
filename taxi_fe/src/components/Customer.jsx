@@ -22,7 +22,8 @@ function Customer(props) {
     });
     channel.join();
     console.log(`Customer ${props.username} connected to channel`);
-  },[props]);
+    return () => { channel.leave(); };
+  },[props.username]);
 
   let submit = () => {
     setLoading(true);

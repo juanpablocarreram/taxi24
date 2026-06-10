@@ -6,8 +6,8 @@ defmodule TaxiBeWeb.TaxiAllocationJobV2 do
 
   # ─── Public API ────────────────────────────────────────────────────────────
 
-  def start_link(request, name) do
-    GenServer.start_link(__MODULE__, request, name: name)
+  def start(request, name) do
+    GenServer.start(__MODULE__, request, name: name)
   end
 
   # ─── Initialization ────────────────────────────────────────────────────────

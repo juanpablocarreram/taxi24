@@ -1,8 +1,15 @@
 defmodule TaxiBeWeb.TaxiAllocationJobV2 do
   use GenServer
 
-  # 1.5 minutes in milliseconds
   @timeout_ms 90_000
+  # Fee charged when customer cancels before any driver accepts (configurable)
+  @cancellation_fee 5.00
+  # Fee charged when customer cancels 3 minutes or less before driver arrival
+  @late_cancel_fee 20.00
+  # Estimated driver arrival time from acceptance (10 minutes)
+  @eta_ms 10 * 60 * 1000
+  # Window before arrival in which late cancellation fee applies (3 minutes)
+  @late_cancel_threshold_ms 3 * 60 * 1000
 
   # ─── Public API ────────────────────────────────────────────────────────────
 
@@ -16,7 +23,6 @@ defmodule TaxiBeWeb.TaxiAllocationJobV2 do
   def init(request) do
     drivers = candidate_taxis()
 
-    # Notify ALL three drivers at the same time
     Enum.each(drivers, fn driver ->
       TaxiBeWeb.Endpoint.broadcast("driver:#{driver.nickname}", "booking_request", %{
         bookingId: request["booking_id"],
@@ -26,26 +32,22 @@ defmodule TaxiBeWeb.TaxiAllocationJobV2 do
       })
     end)
 
-    # One shared timer for all three drivers — 1.5 minutes
     timer = Process.send_after(self(), :timeout, @timeout_ms)
 
-    state = %{
+    {:ok, %{
       request: request,
-      # Tracks which drivers have not yet replied (accept or reject)
       pending_drivers: drivers,
-      timer: timer
-    }
-
-    {:ok, state}
+      timer: timer,
+      status: :pending,
+      accepted_driver: nil,
+      acceptance_time: nil
+    }}
   end
 
   # ─── Timeout: no driver accepted within 1.5 minutes ────────────────────────
 
   @impl true
   def handle_info(:timeout, state) do
-    IO.puts("Timeout reached. No driver accepted the ride.")
-
-    # Tell every driver still waiting to remove the booking from their screen
     Enum.each(state.pending_drivers, fn driver ->
       TaxiBeWeb.Endpoint.broadcast("driver:#{driver.nickname}", "booking_timeout", %{
         bookingId: state.request["booking_id"]
@@ -53,7 +55,6 @@ defmodule TaxiBeWeb.TaxiAllocationJobV2 do
     end)
 
     notify_customer(state.request["username"], "No driver accepted your ride. Please try again.")
-
     {:stop, :normal, state}
   end
 
@@ -61,10 +62,8 @@ defmodule TaxiBeWeb.TaxiAllocationJobV2 do
 
   @impl true
   def handle_cast({:process_accept, driver_name}, state) do
-    IO.puts("#{driver_name} accepted the ride!")
     Process.cancel_timer(state.timer)
 
-    # Tell all OTHER pending drivers that the booking is already taken
     state.pending_drivers
     |> Enum.reject(fn d -> d.nickname == driver_name end)
     |> Enum.each(fn driver ->
@@ -73,22 +72,26 @@ defmodule TaxiBeWeb.TaxiAllocationJobV2 do
       })
     end)
 
+    # booking_ended: false — booking is still active, customer can still cancel
     notify_customer(
       state.request["username"],
-      "Driver #{driver_name} is on the way to #{state.request["pickup_address"]}."
+      "Driver #{driver_name} is on the way to #{state.request["pickup_address"]}.",
+      false
     )
 
-    {:stop, :normal, state}
+    {:noreply, %{state |
+      status: :accepted,
+      accepted_driver: driver_name,
+      acceptance_time: :erlang.monotonic_time(:millisecond),
+      pending_drivers: []
+    }}
   end
 
   @impl true
   def handle_cast({:process_reject, driver_name}, state) do
-    IO.puts("#{driver_name} rejected the ride.")
-
     remaining = Enum.reject(state.pending_drivers, fn d -> d.nickname == driver_name end)
 
     if remaining == [] do
-      # Every driver said no — cancel the timer and tell the customer
       Process.cancel_timer(state.timer)
       notify_customer(state.request["username"], "All drivers rejected your ride. Please try again.")
       {:stop, :normal, state}
@@ -103,10 +106,60 @@ defmodule TaxiBeWeb.TaxiAllocationJobV2 do
     {:stop, :normal, state}
   end
 
+  # ─── Customer cancellation ──────────────────────────────────────────────────
+
+  @impl true
+  def handle_cast({:customer_cancel}, state) do
+    {_fee, message} = determine_cancellation(state)
+
+    case state.status do
+      :pending ->
+        Process.cancel_timer(state.timer)
+        Enum.each(state.pending_drivers, fn driver ->
+          TaxiBeWeb.Endpoint.broadcast("driver:#{driver.nickname}", "booking_timeout", %{
+            bookingId: state.request["booking_id"]
+          })
+        end)
+
+      :accepted ->
+        TaxiBeWeb.Endpoint.broadcast("driver:#{state.accepted_driver}", "booking_cancelled", %{
+          bookingId: state.request["booking_id"],
+          msg: "The customer cancelled the ride."
+        })
+    end
+
+    notify_customer(state.request["username"], message)
+    {:stop, :normal, state}
+  end
+
+  # ─── Cancellation logic ─────────────────────────────────────────────────────
+
+  defp determine_cancellation(%{status: :pending}) do
+    {@cancellation_fee,
+     "Ride cancelled before a driver accepted. A compensation fee of $#{format_fee(@cancellation_fee)} has been charged."}
+  end
+
+  defp determine_cancellation(%{status: :accepted, acceptance_time: acceptance_time}) do
+    elapsed_ms = :erlang.monotonic_time(:millisecond) - acceptance_time
+    remaining_ms = @eta_ms - elapsed_ms
+
+    if remaining_ms <= @late_cancel_threshold_ms do
+      {@late_cancel_fee,
+       "Ride cancelled. A late cancellation fee of $#{format_fee(@late_cancel_fee)} has been charged."}
+    else
+      {0.0, "Ride cancelled. No charge applied."}
+    end
+  end
+
+  defp format_fee(fee), do: :erlang.float_to_binary(fee, [decimals: 2])
+
   # ─── Helpers ────────────────────────────────────────────────────────────────
 
-  defp notify_customer(username, message) do
-    TaxiBeWeb.Endpoint.broadcast("customer:#{username}", "booking_request", %{msg: message})
+  defp notify_customer(username, message, booking_ended \\ true) do
+    TaxiBeWeb.Endpoint.broadcast("customer:#{username}", "booking_request", %{
+      msg: message,
+      booking_ended: booking_ended
+    })
   end
 
   def candidate_taxis do

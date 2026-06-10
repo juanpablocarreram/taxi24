@@ -11,7 +11,8 @@ function Customer(props) {
   let [msg1, setMsg1] = useState("");
   let [loading, setLoading] = useState(false);
   let [bookingStatus, setBookingStatus] = useState("idle"); // idle, sending, success, error
-  let [assignedDriver, setAssignedDriver] = useState(null);
+  let [bookingId, setBookingId] = useState(null);
+  let [bookingActive, setBookingActive] = useState(false);
 
   useEffect(() => {
     let channel = socket.channel("customer:" + props.username, {token: "123"});
@@ -19,20 +20,26 @@ function Customer(props) {
     channel.on("booking_request", dataFromPush => {
       console.log("Customer received update:", dataFromPush);
       setMsg1(dataFromPush.msg);
+      if (dataFromPush.booking_ended !== false) {
+        setBookingActive(false);
+        setBookingId(null);
+      }
     });
     channel.join();
     console.log(`Customer ${props.username} connected to channel`);
     return () => { channel.leave(); };
-  },[props.username]);
+  }, [props.username]);
 
   let submit = () => {
     setLoading(true);
     setBookingStatus("sending");
     setMsg("");
     setMsg1("");
-    
+    setBookingId(null);
+    setBookingActive(false);
+
     console.log("Customer submitting booking:", {pickup_address: pickupAddress, dropoff_address: dropOffAddress, username: props.username});
-    
+
     fetch(`http://localhost:4000/api/bookings`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -47,6 +54,8 @@ function Customer(props) {
         setMsg(dataFromPOST.msg);
         setBookingStatus("success");
         setLoading(false);
+        setBookingId(dataFromPOST.bookingId);
+        setBookingActive(true);
       })
       .catch(error => {
         console.error("Error submitting booking:", error);
@@ -56,37 +65,65 @@ function Customer(props) {
       });
   };
 
+  let cancelBooking = () => {
+    if (!bookingId) return;
+    console.log("Customer cancelling booking:", bookingId);
+
+    fetch(`http://localhost:4000/api/bookings/${bookingId}`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: "customer_cancel"})
+    })
+      .then(resp => resp.json())
+      .then(data => {
+        console.log("Cancel response:", data);
+        setBookingActive(false);
+        setBookingId(null);
+      })
+      .catch(error => console.error("Error cancelling booking:", error));
+  };
+
   return (
     <div style={{textAlign: "center", borderStyle: "solid", padding: "20px", margin: "10px"}}>
       <Typography variant="h6">Customer: {props.username}</Typography>
       <div style={{marginTop: "20px"}}>
-        <TextField 
-          id="pickup-address" 
+        <TextField
+          id="pickup-address"
           label="Pickup address"
           fullWidth
           onChange={ev => setPickupAddress(ev.target.value)}
           value={pickupAddress}
-          disabled={loading}
+          disabled={loading || bookingActive}
           style={{marginBottom: "10px"}}
         />
-        <TextField 
-          id="dropoff-address" 
+        <TextField
+          id="dropoff-address"
           label="Drop off address"
           fullWidth
           onChange={ev => setDropOffAddress(ev.target.value)}
           value={dropOffAddress}
-          disabled={loading}
+          disabled={loading || bookingActive}
           style={{marginBottom: "10px"}}
         />
-        <Button 
-          onClick={submit} 
-          variant="contained" 
-          color="primary"
-          disabled={loading}
-          style={{marginTop: "10px"}}
-        >
-          {loading ? <CircularProgress size={24} /> : "Submit Booking"}
-        </Button>
+        <Box style={{display: "flex", gap: "10px", justifyContent: "center", marginTop: "10px"}}>
+          <Button
+            onClick={submit}
+            variant="contained"
+            color="primary"
+            disabled={loading || bookingActive}
+          >
+            {loading ? <CircularProgress size={24} /> : "Submit Booking"}
+          </Button>
+          {bookingActive && (
+            <Button
+              onClick={cancelBooking}
+              variant="outlined"
+              color="error"
+            >
+              Cancel Booking
+            </Button>
+          )}
+        </Box>
       </div>
 
       {msg && (

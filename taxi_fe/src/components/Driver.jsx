@@ -9,6 +9,7 @@ function Driver(props) {
   let [currentIndex, setCurrentIndex] = useState(0);
   let [processingId, setProcessingId] = useState(null);
   let [connectionStatus, setConnectionStatus] = useState("connecting");
+  let [driverNotification, setDriverNotification] = useState(null);
 
   useEffect(() => {
     console.log(`[Driver ${props.username}] Initializing WebSocket connection...`);
@@ -17,6 +18,7 @@ function Driver(props) {
     
     channel.on("booking_request", data => {
       console.log(`[Driver ${props.username}] Received new booking request:`, data);
+      setDriverNotification(null);
       setRequests(prev => {
         const newRequests = [...prev, {
           bookingId: data.bookingId,
@@ -28,6 +30,12 @@ function Driver(props) {
         console.log(`[Driver ${props.username}] Updated requests queue. Total: ${newRequests.length}`);
         return newRequests;
       });
+    });
+    channel.on("booking_cancelled", data => {
+      console.log(`[Driver ${props.username}] Booking ${data.bookingId} cancelled by customer.`);
+      setRequests(prev => prev.filter(req => req.bookingId !== data.bookingId));
+      setCurrentIndex(prev => (prev > 0 ? prev - 1 : 0));
+      setDriverNotification(data.msg || "The customer cancelled the booking.");
     });
     channel.on("booking_timeout", data => {
       console.log(`[Driver ${props.username}] Request ${data.bookingId} timed out on server.`);
@@ -129,6 +137,12 @@ function Driver(props) {
         />
       </Box>
       
+      {driverNotification && (
+        <Alert severity="warning" style={{marginBottom: "10px"}}>
+          {driverNotification}
+        </Alert>
+      )}
+
       {requests.length > 0 ? (
         <div>
           <Box style={{backgroundColor: "lavender", minHeight: "250px", padding: "20px"}}>
